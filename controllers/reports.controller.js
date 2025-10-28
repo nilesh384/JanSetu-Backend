@@ -1740,7 +1740,7 @@ const getAdminReports = async (req, res) => {
             department: report.department,
             isResolved: report.is_resolved,
             resolvedBy: report.resolved_by,
-            resolutionNote: report.resolution_note,
+            resolutionNotes: report.resolution_note,
             resolvedMediaUrls: parseArrayField(report.resolved_media_urls),
             resolvedPhotos: parseArrayField(report.resolved_media_urls),
             timeTakenToResolve: report.time_taken_to_resolve,
@@ -1749,7 +1749,8 @@ const getAdminReports = async (req, res) => {
             assignedAdminName: report.assigned_admin_name,
             assignedAdminEmail: report.assigned_admin_email,
             createdAt: toISO(report.created_at),
-            updatedAt: toISO(report.updated_at)
+            updatedAt: toISO(report.updated_at),
+            resolvedAt: toISO(report.resolved_at)
         }));
 
         console.log(`✅ Found ${mappedReports.length} reports for admin ${adminId} (role: ${adminRole})`);
