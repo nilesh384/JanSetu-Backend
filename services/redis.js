@@ -11,22 +11,43 @@ class RedisService {
 
   async connect() {
     try {
-      // Correct configuration for node-redis v4
-      this.client = redis.createClient({
-        url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
-        socket: {
-          connectTimeout: 60000,
-          // The modern reconnectStrategy replaces the old retry_strategy
-          reconnectStrategy: (retries) => {
-            if (retries > 10) {
-              console.error('❌ Too many retries, Redis connection terminated.');
-              return new Error('Too many retries.');
+      // Enhanced Redis configuration for production deployments
+      const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+      
+      // For Upstash and other TLS Redis services
+      if (redisUrl.startsWith('rediss://')) {
+        this.client = redis.createClient({
+          url: redisUrl,
+          socket: {
+            connectTimeout: 60000,
+            reconnectStrategy: (retries) => {
+              if (retries > 10) {
+                console.error('❌ Too many retries, Redis connection terminated.');
+                return new Error('Too many retries.');
+              }
+              const delay = Math.min(1000 * Math.pow(2, retries), 30000);
+              console.log(`⏳ Redis reconnect attempt ${retries + 1} in ${delay}ms`);
+              return delay;
             }
-            // Reconnect every 1 second
-            return 1000;
           }
-        }
-      });
+        });
+      } else {
+        // Regular Redis connection
+        this.client = redis.createClient({
+          url: redisUrl,
+          socket: {
+            connectTimeout: 60000,
+            reconnectStrategy: (retries) => {
+              if (retries > 10) {
+                console.error('❌ Too many retries, Redis connection terminated.');
+                return new Error('Too many retries.');
+              }
+              const delay = Math.min(1000 * Math.pow(2, retries), 30000);
+              return delay;
+            }
+          }
+        });
+      }
 
       // Handle connection events
       this.client.on('connect', () => {
@@ -146,6 +167,21 @@ class RedisService {
     } catch (error) {
       console.error('Redis EXISTS error:', error.message);
       return false;
+    }
+  }
+
+  // Get TTL (time to live) for a key
+  async getTTL(key) {
+    if (!this.isAvailable()) {
+      return -1;
+    }
+
+    try {
+      const ttl = await this.client.ttl(key);
+      return ttl;
+    } catch (error) {
+      console.error('Redis TTL error:', error.message);
+      return -1;
     }
   }
 
