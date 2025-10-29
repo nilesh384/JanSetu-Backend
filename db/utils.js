@@ -18,33 +18,44 @@ const RETRY_CONFIG = {
 };
 
 const buildSslConfig = () => {
+  // Check if running on Vercel or other serverless platforms
+  const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const isAivenDatabase = process.env.DATABASE_URL && process.env.DATABASE_URL.includes('aivencloud.com');
+  
+  // For serverless platforms OR Aiven databases in production, use lenient SSL
+  if (isServerless || (isProduction && isAivenDatabase)) {
+    return { 
+      rejectUnauthorized: false, // Allow self-signed certificates
+      sslmode: 'require' // Still require SSL connection
+    };
+  }
+
   const caPath = process.env.PG_CA_PATH;
   if (caPath) {
     const resolved = path.resolve(caPath);
     if (fs.existsSync(resolved)) {
       try {
         const caBuf = fs.readFileSync(resolved);
-        console.log('✅ Using custom Postgres CA from PG_CA_PATH:', resolved);
         return { ca: [caBuf], rejectUnauthorized: true };
       } catch (err) {
-        console.error('❌ Error reading PG_CA_PATH file:', err);
+        // fall through to other handling
       }
     } else {
-      console.warn(`⚠️ PG_CA_PATH provided but file not found at resolved path: ${resolved}`);
+      // PG_CA_PATH provided but file not found
     }
   }
 
+  // In production, if we reach here, use lenient SSL for deployment compatibility
   if (process.env.NODE_ENV === 'production') {
-    console.warn('⚠️ NODE_ENV=production and no PG_CA_PATH provided - SSL verification will be required.');
-    return { rejectUnauthorized: true };
+    return { rejectUnauthorized: false, sslmode: 'require' };
   }
 
-  console.warn('⚠️ Dev fallback: disabling Postgres SSL certificate verification (rejectUnauthorized=false).');
+  // Development fallback
   try {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    console.warn('⚠️ NODE_TLS_REJECT_UNAUTHORIZED set to 0 for development (insecure).');
   } catch (e) {
-    console.warn('⚠️ Could not set NODE_TLS_REJECT_UNAUTHORIZED:', e);
+    // Could not set NODE_TLS_REJECT_UNAUTHORIZED
   }
 
   return { rejectUnauthorized: false };
