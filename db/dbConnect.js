@@ -20,6 +20,17 @@ let connectionAttempts = 0;
 let lastConnectionError = null;
 
 const buildSslConfig = () => {
+  // Check if running on Vercel or other serverless platforms
+  const isServerless = process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  
+  // For serverless platforms, use a more lenient SSL configuration
+  if (isServerless) {
+    return { 
+      rejectUnauthorized: false, // Allow self-signed certificates
+      sslmode: 'require' // Still require SSL connection
+    };
+  }
+
   // If a CA file path is provided via PG_CA_PATH, use it (recommended for production)
   const caPath = process.env.PG_CA_PATH;
   if (caPath) {
@@ -28,35 +39,30 @@ const buildSslConfig = () => {
       try {
         // Read as Buffer (pg/tls accepts Buffer, string, or array)
         const caBuf = fs.readFileSync(resolved);
-        console.log('✅ Using custom Postgres CA from PG_CA_PATH:', resolved);
         // Pass CA as an array to support certificate chains
         return { ca: [caBuf], rejectUnauthorized: true };
       } catch (err) {
-        console.error('❌ Error reading PG_CA_PATH file:', err);
         // fall through to other handling
       }
     } else {
-      console.warn(`⚠️ PG_CA_PATH provided but file not found at resolved path: ${resolved}`);
+      // PG_CA_PATH provided but file not found
     }
   }
 
   // In production we require proper certificate verification
   if (process.env.NODE_ENV === 'production') {
-    console.warn('⚠️ NODE_ENV=production and no PG_CA_PATH provided - SSL verification will be required.');
     return { rejectUnauthorized: true };
   }
 
   // Development fallback: disable cert verification to avoid SELF_SIGNED_CERT_IN_CHAIN
   // WARNING: insecure - do NOT use in production
-  console.warn('⚠️ Dev fallback: disabling Postgres SSL certificate verification (rejectUnauthorized=false).');
   // Also set the Node TLS global flag to be permissive in development so the underlying
   // TLS layer does not abort the connection for self-signed cert chains. This is
   // intentionally only done for non-production environments.
   try {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    console.warn('⚠️ NODE_TLS_REJECT_UNAUTHORIZED set to 0 for development (insecure).');
   } catch (e) {
-    console.warn('⚠️ Could not set NODE_TLS_REJECT_UNAUTHORIZED:', e);
+    // Could not set NODE_TLS_REJECT_UNAUTHORIZED
   }
 
   return { rejectUnauthorized: false };
