@@ -14,19 +14,21 @@ class RedisService {
       // Enhanced Redis configuration for production deployments
       const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
       
+      // Serverless-optimized configuration
+      const isProduction = process.env.NODE_ENV === 'production';
+      const connectTimeout = isProduction ? 10000 : 60000; // Shorter timeout for serverless
+      
       // For Upstash and other TLS Redis services
       if (redisUrl.startsWith('rediss://')) {
         this.client = redis.createClient({
           url: redisUrl,
           socket: {
-            connectTimeout: 60000,
+            connectTimeout,
             reconnectStrategy: (retries) => {
-              if (retries > 10) {
-                console.error('❌ Too many retries, Redis connection terminated.');
+              if (retries > 5) { // Reduced retries for serverless
                 return new Error('Too many retries.');
               }
-              const delay = Math.min(1000 * Math.pow(2, retries), 30000);
-              console.log(`⏳ Redis reconnect attempt ${retries + 1} in ${delay}ms`);
+              const delay = Math.min(1000 * Math.pow(2, retries), 10000); // Faster reconnect
               return delay;
             }
           }
@@ -36,13 +38,12 @@ class RedisService {
         this.client = redis.createClient({
           url: redisUrl,
           socket: {
-            connectTimeout: 60000,
+            connectTimeout,
             reconnectStrategy: (retries) => {
-              if (retries > 10) {
-                console.error('❌ Too many retries, Redis connection terminated.');
+              if (retries > 5) { // Reduced retries for serverless
                 return new Error('Too many retries.');
               }
-              const delay = Math.min(1000 * Math.pow(2, retries), 30000);
+              const delay = Math.min(1000 * Math.pow(2, retries), 10000); // Faster reconnect
               return delay;
             }
           }

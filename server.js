@@ -6,74 +6,73 @@ dotenv.config({path: './.env'});
 
 const PORT = process.env.PORT || 4000;
 
-// Global error handlers to prevent crashes
-process.on('uncaughtException', (error) => {
-  console.error('🚨 Uncaught Exception:', error.message);
-  console.error('Stack:', error.stack);
-  // Don't exit immediately, log and continue
-});
+// Check if we're running on Vercel (serverless)
+const isVercel = process.env.VERCEL === '1' || process.env.NOW_REGION;
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit immediately, log and continue
-});
-
-// Graceful shutdown handlers
-const gracefulShutdown = async () => {
-  console.log('\n🛑 Shutting down gracefully...');
+if (!isVercel) {
+  // Local development - run as traditional server
   
-  // Close Redis connection
-  await redisService.disconnect();
-  
-  // Close server and database connections
-  if (global.server) {
-    global.server.close(() => {
-      console.log('✅ HTTP server closed');
-      process.exit(0);
-    });
-  } else {
-    process.exit(0);
-  }
-};
+  // Global error handlers to prevent crashes
+  process.on('uncaughtException', (error) => {
+    console.error('🚨 Uncaught Exception:', error.message);
+    console.error('Stack:', error.stack);
+  });
 
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+  });
 
-// Start server without requiring database connection at startup
-const startServer = async () => {
-  try {
-    // Initialize Redis connection
-    console.log('🔄 Initializing Redis...');
-    await redisService.connect();
+  // Graceful shutdown handlers
+  const gracefulShutdown = async () => {
+    console.log('\n🛑 Shutting down gracefully...');
     
-    const server = app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📊 Health check available at: http://localhost:${PORT}/api/v1/health`);
-      console.log(`🗄️ Database status at: http://localhost:${PORT}/api/v1/health/db`);
-      console.log(`🔴 Redis status: ${redisService.isAvailable() ? 'Connected' : 'Disconnected'}`);
-    });
+    await redisService.disconnect();
+    
+    if (global.server) {
+      global.server.close(() => {
+        console.log('✅ HTTP server closed');
+        process.exit(0);
+      });
+    } else {
+      process.exit(0);
+    }
+  };
 
-    // Handle server errors
-    server.on('error', (error) => {
-      if (error.code === 'EADDRINUSE') {
-        console.error(`❌ Port ${PORT} is already in use`);
-      } else {
-        console.error('❌ Server error:', error);
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
+
+  // Start server for local development
+  const startServer = async () => {
+    try {
+      try {
+        await redisService.connect();
+      } catch (redisError) {
+        console.log('⚠️ Redis connection failed, continuing without cache');
       }
-    });
+      
+      const server = app.listen(PORT, () => {
+        console.log(`🚀 Server running on port ${PORT}`);
+      });
 
-    // Keep reference for graceful shutdown
-    global.server = server;
+      server.on('error', (error) => {
+        if (error.code === 'EADDRINUSE') {
+          console.error(`❌ Port ${PORT} is already in use`);
+        } else {
+          console.error('❌ Server error:', error);
+        }
+      });
 
-    return server;
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
-};
+      global.server = server;
 
-// Start the server
-const server = await startServer();
+      return server;
+    } catch (error) {
+      console.error('❌ Failed to start server:', error);
+      process.exit(1);
+    }
+  };
 
-// Export for graceful shutdown
-export default server;
+  startServer();
+}
+
+// Export app for Vercel serverless
+export default app;
