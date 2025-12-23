@@ -1,5 +1,5 @@
 import { query, queryOne, transaction } from "../db/utils.js";
-import { uploadOnCloudinary } from "../services/cloudinary.js";
+import { uploadBufferToCloudinary } from "../services/cloudinary.js";
 import redisService from "../services/redis.js";
 import { sendReportResolvedNotification } from "../services/notificationService.js";
 
@@ -836,28 +836,27 @@ const resolveReport = async (req, res) => {
                 for (const photoPath of resolvedPhotos) {
                     try {
                         console.log('📤 Uploading file:', photoPath);
-                        const cloudinaryResult = await uploadOnCloudinary(photoPath);
+                        // For resolved photos from disk, read file and upload as buffer
+                        const fs = await import('fs');
+                        const fileBuffer = fs.readFileSync(photoPath);
+                        const cloudinaryResult = await uploadBufferToCloudinary(fileBuffer);
                         if (cloudinaryResult && cloudinaryResult.url) {
                             resolvedMediaUrls.push(cloudinaryResult.url);
                             console.log('✅ Successfully uploaded:', cloudinaryResult.url);
                             
-                            // Additional cleanup check - ensure file is deleted
+                            // Cleanup the temp file
                             try {
-                                const fs = await import('fs');
                                 if (fs.existsSync(photoPath)) {
                                     fs.unlinkSync(photoPath);
-                                    console.log('🧹 Extra cleanup completed for:', photoPath);
-                                } else {
-                                    console.log('📁 File already cleaned up by uploadOnCloudinary:', photoPath);
+                                    console.log('🧹 Cleanup completed for:', photoPath);
                                 }
                             } catch (extraCleanupError) {
-                                console.error('⚠️ Extra cleanup failed (but upload succeeded):', photoPath, extraCleanupError);
+                                console.error('⚠️ Cleanup failed (but upload succeeded):', photoPath, extraCleanupError);
                             }
                         } else {
                             console.error('❌ Upload failed for:', photoPath);
                             // Cleanup failed upload
                             try {
-                                const fs = await import('fs');
                                 if (fs.existsSync(photoPath)) {
                                     fs.unlinkSync(photoPath);
                                     console.log('🧹 Cleaned up failed upload file:', photoPath);
@@ -1376,7 +1375,7 @@ const uploadReportMedia = async (req, res) => {
             console.log('📸 Uploading media files...');
             for (const mediaFile of req.files.mediaFiles) {
                 try {
-                    const cloudinaryResponse = await uploadOnCloudinary(mediaFile.path);
+                    const cloudinaryResponse = await uploadBufferToCloudinary(mediaFile.buffer);
                     if (cloudinaryResponse) {
                         uploadedUrls.mediaUrls.push(cloudinaryResponse.secure_url);
                         console.log('✅ Media file uploaded:', cloudinaryResponse.secure_url);
@@ -1394,7 +1393,7 @@ const uploadReportMedia = async (req, res) => {
             console.log('🎤 Uploading audio file...');
             try {
                 const audioFile = req.files.audioFile[0];
-                const cloudinaryResponse = await uploadOnCloudinary(audioFile.path);
+                const cloudinaryResponse = await uploadBufferToCloudinary(audioFile.buffer);
                 if (cloudinaryResponse) {
                     uploadedUrls.audioUrl = cloudinaryResponse.secure_url;
                     console.log('✅ Audio file uploaded:', cloudinaryResponse.secure_url);
@@ -1447,7 +1446,7 @@ const uploadSingleMedia = async (req, res) => {
         console.log('📁 Uploading single media for user:', userId);
         console.log('📄 File:', req.file.originalname);
 
-        const cloudinaryResponse = await uploadOnCloudinary(req.file.path);
+        const cloudinaryResponse = await uploadBufferToCloudinary(req.file.buffer);
         
         if (!cloudinaryResponse) {
             return res.status(500).json({

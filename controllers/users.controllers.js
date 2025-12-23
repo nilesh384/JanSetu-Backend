@@ -1,5 +1,5 @@
 import { query, queryOne, queryMany, transaction } from "../db/utils.js";
-import { uploadOnCloudinary, deleteOnCloudinary, extractPublicIdFromUrl } from "../services/cloudinary.js";
+import { uploadBufferToCloudinary, deleteOnCloudinary, extractPublicIdFromUrl } from "../services/cloudinary.js";
 
 // Helper to convert DB timestamp values to ISO strings (null-safe)
 const toISO = (val) => (val ? new Date(val).toISOString() : null);
@@ -351,8 +351,8 @@ const uploadProfileImage = async (req, res) => {
 
         const currentUser = userResult.rows[0];
         
-        // Upload new image to Cloudinary
-        const cloudinaryResponse = await uploadOnCloudinary(req.file.path);
+        // Upload new image directly from buffer to Cloudinary
+        const cloudinaryResponse = await uploadBufferToCloudinary(req.file.buffer);
         
         if (!cloudinaryResponse) {
             return res.status(500).json({

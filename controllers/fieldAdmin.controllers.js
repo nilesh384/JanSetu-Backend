@@ -1,5 +1,5 @@
 import { query, queryOne, transaction } from "../db/utils.js";
-import { uploadOnCloudinary } from "../services/cloudinary.js";
+import { uploadBufferToCloudinary } from "../services/cloudinary.js";
 
 // Helper to convert DB timestamp values to ISO strings (null-safe)
 const toISO = (val) => (val ? new Date(val).toISOString() : null);
@@ -261,7 +261,7 @@ export const addProgressUpdate = async (req, res) => {
         let photoUrls = [];
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
-                const result = await uploadOnCloudinary(file.path);
+                const result = await uploadBufferToCloudinary(file.buffer);
                 if (result?.url) {
                     photoUrls.push(result.url);
                 }
@@ -323,7 +323,7 @@ export const completeReport = async (req, res) => {
         // Fallback: upload files if provided
         else if (req.files && req.files.length > 0) {
             for (const file of req.files) {
-                const result = await uploadOnCloudinary(file.path);
+                const result = await uploadBufferToCloudinary(file.buffer);
                 if (result?.url) {
                     finalResolvedPhotos.push(result.url);
                 }
@@ -556,7 +556,7 @@ export const uploadWorkPhoto = async (req, res) => {
             });
         }
 
-        const result = await uploadOnCloudinary(req.file.path);
+        const result = await uploadBufferToCloudinary(req.file.buffer);
 
         if (!result || !result.url) {
             return res.status(500).json({

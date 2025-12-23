@@ -1,5 +1,6 @@
 import {v2 as cloudinary} from "cloudinary"
 import fs from "fs"
+import { Readable } from "stream";
 
 
 cloudinary.config({ 
@@ -16,6 +17,46 @@ const extractPublicIdFromUrl = (url) => {
     return publicId;
 };
 
+/**
+ * Upload file buffer directly to Cloudinary (recommended for serverless)
+ * @param {Buffer} buffer - File buffer from multer memory storage
+ * @param {Object} options - Cloudinary upload options
+ * @returns {Promise<Object|null>} Cloudinary response or null on error
+ */
+const uploadBufferToCloudinary = async (buffer, options = {}) => {
+    try {
+        if (!buffer) return null;
+
+        return new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    resource_type: "auto",
+                    ...options
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('❌ Cloudinary buffer upload failed:', error);
+                        reject(error);
+                    } else {
+                        resolve(result);
+                    }
+                }
+            );
+
+            // Convert buffer to stream and pipe to Cloudinary
+            const readableStream = Readable.from(buffer);
+            readableStream.pipe(uploadStream);
+        });
+    } catch (error) {
+        console.error('❌ Cloudinary buffer upload error:', error);
+        return null;
+    }
+};
+
+/**
+ * Legacy function: Upload file from disk path to Cloudinary
+ * @deprecated Use uploadBufferToCloudinary for better serverless compatibility
+ */
 const uploadOnCloudinary = async (localFilePath) => {
     try {
         if (!localFilePath) return null
@@ -61,4 +102,4 @@ const deleteOnCloudinary = async (publicId, resourceType = "image") => {
 
 
 
-export {extractPublicIdFromUrl, uploadOnCloudinary, deleteOnCloudinary}
+export {extractPublicIdFromUrl, uploadOnCloudinary, uploadBufferToCloudinary, deleteOnCloudinary}
