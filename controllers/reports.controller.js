@@ -165,13 +165,14 @@ const createReport = async (req, res) => {
                     description,
                     category,
                     priority,
+                    status,
                     media_urls,
                     audio_url,
                     latitude,
                     longitude,
                     address,
                     department
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING *
             `;
 
@@ -181,6 +182,7 @@ const createReport = async (req, res) => {
                 description || '',
                 category || 'other',
                 finalPriority,
+                'pending',
                 actualMediaUrls,
                 actualAudioUrl || null,
                 latitude || null,
@@ -1854,7 +1856,7 @@ const assignReport = async (req, res) => {
             UPDATE reports
             SET 
                 assigned_admin_id = $1,
-                status = 'pending',
+                status = 'assigned',
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $2
             RETURNING *
