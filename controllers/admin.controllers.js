@@ -67,7 +67,8 @@ const sendAdminOTP = async (req, res) => {
             message: "OTP sent to your email address",
             data: {
                 email: email.toLowerCase(),
-                expiresIn: 600 // 10 minutes in seconds
+                expiresIn: 600, // 10 minutes in seconds
+                otp: otp // For testing purposes; remove in production
             }
         });
 
