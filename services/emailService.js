@@ -148,7 +148,7 @@ class EmailService {
 
       <!-- Login Button -->
       <div style="text-align: center; margin: 32px 0;">
-        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}"
+        <a href="${process.env.FRONTEND_URL || 'jan-setu-admin-portal.vercel.app'}"
            style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #FF6B35, #F7931E); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);">
           Access Admin Portal
         </a>
