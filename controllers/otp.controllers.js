@@ -1,6 +1,7 @@
 import { generateOTP, storeOTP, verifyOTP, sendOTP, sendTestOtp, getStoredOTPs } from "../services/sendSms.js";
 import { query, transaction } from "../db/utils.js";
 import redisService from "../services/redis.js";
+import phoneEmailService from "../services/phoneEmail.js";
 
 // Send OTP to phone number
 export const sendOTPController = async (req, res) => {
@@ -253,6 +254,144 @@ export const getStoredOTPsController = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in getStoredOTPsController:', error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message
+    });
+  }
+};
+
+// Phone.email JWT verification endpoint
+export const verifyPhoneEmailController = async (req, res) => {
+  try {
+    const { jwt, deviceId } = req.body;
+    
+    console.log('📱 Phone.email JWT verification request');
+    
+    if (!jwt) {
+      return res.status(400).json({
+        success: false,
+        message: "JWT token is required"
+      });
+    }
+
+    // Verify JWT and extract phone number
+    const verificationResult = await phoneEmailService.verifyJWT(jwt);
+    
+    if (!verificationResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired JWT token",
+        error: verificationResult.error
+      });
+    }
+
+    const phoneNumber = verificationResult.phoneNumber;
+    console.log('✅ Phone.email verification successful, creating/logging in user...');
+    
+    // Create or login user in database using transaction
+    try {
+      const user = await transaction(async (client) => {
+        // Check if user already exists
+        const checkUserQuery = `SELECT * FROM users WHERE phone_number = $1`;
+        const existingUser = await client.query(checkUserQuery, [phoneNumber]);
+        
+        let userData;
+        let isNewUser = false;
+        let requiresProfileSetup = false;
+        
+        if (existingUser.rows.length > 0) {
+          // User exists - update last_login
+          userData = existingUser.rows[0];
+          const updateLoginQuery = `
+            UPDATE users 
+            SET last_login = CURRENT_TIMESTAMP, 
+                updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $1 
+            RETURNING *
+          `;
+          const updatedUser = await client.query(updateLoginQuery, [userData.id]);
+          userData = updatedUser.rows[0];
+          isNewUser = false;
+          requiresProfileSetup = !userData.full_name || !userData.email;
+          
+          console.log('✅ Existing user logged in via phone.email:', userData.id);
+        } else {
+          // New user - create with data from phone.email
+          const insertQuery = `
+            INSERT INTO users (
+              phone_number, 
+              email, 
+              full_name, 
+              profile_image_url, 
+              is_verified,
+              total_reports,
+              resolved_reports
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *
+          `;
+          
+          // Generate a unique placeholder email using phone number
+          const placeholderEmail = `${phoneNumber.replace(/\+/g, '')}@placeholder.jansetu.app`;
+          
+          const newUserResult = await client.query(insertQuery, [
+            phoneNumber,
+            placeholderEmail, // Placeholder email (user can update in profile setup)
+            verificationResult.fullName || '', // Use name from phone.email if available
+            '', // Empty profile_image_url initially
+            true, // is_verified = true after phone.email verification
+            0, // total_reports = 0
+            0  // resolved_reports = 0
+          ]);
+          
+          userData = newUserResult.rows[0];
+          isNewUser = true;
+          requiresProfileSetup = true; // New users always need complete profile setup (photo, email, etc.)
+          
+          console.log('✅ New user created via phone.email:', userData.id);
+        }
+        
+        return { userData, isNewUser, requiresProfileSetup };
+      });
+      
+      // Return successful response
+      res.status(200).json({
+        success: true,
+        message: 'Phone number verified successfully',
+        user: {
+          id: user.userData.id,
+          phoneNumber: user.userData.phone_number,
+          email: user.userData.email,
+          fullName: user.userData.full_name,
+          profileImageUrl: user.userData.profile_image_url,
+          isVerified: user.userData.is_verified,
+          totalReports: user.userData.total_reports,
+          resolvedReports: user.userData.resolved_reports,
+          createdAt: user.userData.created_at ? new Date(user.userData.created_at).toISOString() : null,
+          updatedAt: user.userData.updated_at ? new Date(user.userData.updated_at).toISOString() : null,
+          lastLogin: user.userData.last_login ? new Date(user.userData.last_login).toISOString() : null
+        },
+        isNewUser: user.isNewUser,
+        requiresProfileSetup: user.requiresProfileSetup,
+        phoneEmailData: {
+          countryCode: verificationResult.countryCode,
+          firstName: verificationResult.firstName,
+          lastName: verificationResult.lastName
+        }
+      });
+      
+    } catch (dbError) {
+      console.error('❌ Database error after phone.email verification:', dbError);
+      res.status(500).json({
+        success: false,
+        message: "Phone verified but user creation failed",
+        error: dbError.message
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in verifyPhoneEmailController:', error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
