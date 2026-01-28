@@ -1,15 +1,12 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import removeMd from 'remove-markdown';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-const SYSTEM_PROMPT = {
-  role: "user",
-  parts: [{ text: `
-You are 'Sahay', the official AI guide for the JanSetu mobile application. Your primary purpose is to assist citizens of Jharkhand in using the app to report and track local civic issues. You are friendly, encouraging, and an expert on all the app's features.
+const SYSTEM_PROMPT = `You are 'Sahay', the official AI guide for the JanSetu mobile application. Your primary purpose is to assist citizens of Jharkhand in using the app to report and track local civic issues. You are friendly, encouraging, and an expert on all the app's features.
 
 ### Your Core Knowledge:
 You are an expert on the JanSetu app and its functionalities. This includes:
@@ -30,37 +27,60 @@ You are an expert on the JanSetu app and its functionalities. This includes:
 4.  **Stay On-Topic:** Your knowledge is strictly limited to the JanSetu app. If a user asks about anything else (e.g., politics, weather, personal opinions, general knowledge), you must politely decline and steer the conversation back to the app. A good response would be: "I can only help with questions about the JanSetu application. How can I assist you with reporting an issue or checking a report's status?"
 5.  **Keep it Simple:** Use clear, simple language. Avoid technical jargon. Provide step-by-step instructions when needed.
 
-Start your first interaction with a warm and welcoming greeting, such as: "Hello! I'm Sahay, your guide for the JanSetu app. I'm here to help you report issues and make our community better. What can I help you with today?"
-` }]
-};
+Start your first interaction with a warm and welcoming greeting, such as: "Hello! I'm Sahay, your guide for the JanSetu app. I'm here to help you report issues and make our community better. What can I help you with today?"`;
 
 async function generateAIResponse(messages) {
- 
-  const userMessages = messages
-  .filter(msg => msg.message?.trim()) // skip blank messages
-  .map(msg => {
-    let role = msg.role?.toLowerCase();
+  try {
+    const userMessages = messages
+      .filter(msg => msg.message?.trim()) // skip blank messages
+      .map(msg => {
+        let role = msg.role?.toLowerCase();
 
-    // Gemini only accepts 'user' or 'model'
-    const geminiRole = role === 'user' ? 'user' : 'model'; // ✅ Only user/model allowed
+        // Groq accepts 'user', 'assistant', or 'system'
+        const groqRole = role === 'user' ? 'user' : 'assistant';
 
-    return {
-      role: geminiRole,
-      parts: [{ text: msg.message }],
-    };
-  });
+        return {
+          role: groqRole,
+          content: msg.message,
+        };
+      });
 
-  const geminiMessages = [SYSTEM_PROMPT, ...userMessages];
-  
-
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent({
-      contents: geminiMessages,
+    // Add system prompt at the beginning
+    const groqMessages = [
+      {
+        role: 'system',
+        content: SYSTEM_PROMPT
+      },
+      ...userMessages
+    ];
+    
+    const response = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: groqMessages,
+        temperature: 0.7
+      })
     });
 
-    const response = await result.response;
-    const text = response.text();
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Groq API error: ${response.status} - ${JSON.stringify(errorData)}`);
+    }
+
+    const data = await response.json();
+    const text = data.choices[0].message.content;
+    
     return removeMd(text);
+  } catch (error) {
+    console.error("❌ Error in generateAIResponse function:", error.message);
+    console.error("Full error:", error);
+    throw error; // Re-throw for backend to catch
+  }
 }
 
 export default generateAIResponse;
