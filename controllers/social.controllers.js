@@ -134,22 +134,25 @@ const getSocialPosts = async (req, res) => {
         // Handle userId from different sources - for GET requests, userId might come from query params
         const requestingUserId = req.userId || req.body?.userId || req.query?.userId || null;
 
-        console.log('🔍 Fetching social posts:', { tab, limit, offset, requestingUserId, query: req.query });
+        console.log('🔍 Fetching social posts:', { tab, limit, offset, requestingUserId });
+        console.log('🔍 Query params:', req.query);
+        console.log('🔍 Will join votes table:', !!requestingUserId);
 
         // Create cache key
         const cacheKey = `social_posts:${tab}:${limit}:${offset}:${requestingUserId || 'guest'}:${latitude || 'none'}:${longitude || 'none'}:${radius}:${category || 'all'}:${priority || 'all'}`;
         
+        // Temporarily disable cache for debugging userVote issues
         // Try cache first
-        const cachedPosts = await redisService.getCachedReports(cacheKey);
-        if (cachedPosts) {
-            console.log('📦 Returning cached social posts');
-            return res.status(200).json({
-                success: true,
-                posts: cachedPosts.posts,
-                pagination: cachedPosts.pagination,
-                cached: true
-            });
-        }
+        // const cachedPosts = await redisService.getCachedReports(cacheKey);
+        // if (cachedPosts) {
+        //     console.log('📦 Returning cached social posts');
+        //     return res.status(200).json({
+        //         success: true,
+        //         posts: cachedPosts.posts,
+        //         pagination: cachedPosts.pagination,
+        //         cached: true
+        //     });
+        // }
 
         let baseQuery = `
             SELECT 
@@ -207,7 +210,7 @@ const getSocialPosts = async (req, res) => {
         // Apply filters based on tab
         if (tab === 'trending') {
             baseQuery += ` AND (sp.total_score > 5 OR sp.comment_count > 3 OR sp.view_count > 50)`;
-        } else if (tab === 'my_activity' && requestingUserId) {
+        } else if ((tab === 'my_activity' || tab === 'activity') && requestingUserId) {
             baseQuery += ` AND sp.user_id = $${paramIndex}`;
             queryParams.push(requestingUserId);
             paramIndex++;
@@ -248,7 +251,12 @@ const getSocialPosts = async (req, res) => {
         baseQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         queryParams.push(parseInt(limit), parseInt(offset));
 
+        console.log('🔍 Executing query with params:', queryParams);
         const result = await query(baseQuery, queryParams);
+        
+        if (result.rows.length > 0) {
+            console.log('🔍 First post raw user_vote:', result.rows[0].user_vote);
+        }
 
         const posts = result.rows.map(post => ({
             id: post.id,
@@ -282,13 +290,15 @@ const getSocialPosts = async (req, res) => {
 
         const responseData = {
             posts: posts,
-            pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
-                hasMore: posts.length === parseInt(limit),
-                total: posts.length
-            }
+            totalCount: posts.length,
+            currentPage: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+            totalPages: 1, // We don't have total count, so this is estimated
+            hasMore: posts.length === parseInt(limit)
         };
+
+        if (posts.length > 0) {
+            console.log('✅ First post userVote in response:', posts[0].userVote);
+        }
 
         // Cache results for 5 minutes
         await redisService.cacheReports(cacheKey, responseData, 300);
@@ -693,14 +703,23 @@ const getPostComments = async (req, res) => {
 // Get social feed statistics
 const getSocialStats = async (req, res) => {
     try {
-        console.log('📊 Fetching social feed statistics');
+        const { userId } = req.params;
         
-        const cacheKey = 'social_stats';
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'User ID is required'
+            });
+        }
+
+        console.log('📊 Fetching social statistics for user:', userId);
+        
+        const cacheKey = `social_stats:user:${userId}`;
         
         // Try cache first
         const cachedStats = await redisService.getCachedReports(cacheKey);
         if (cachedStats) {
-            console.log('📦 Returning cached social stats');
+            console.log('📦 Returning cached user social stats');
             return res.status(200).json({
                 success: true,
                 stats: cachedStats,
@@ -708,50 +727,36 @@ const getSocialStats = async (req, res) => {
             });
         }
 
+        // Get user-specific statistics
         const statsQuery = `
             SELECT 
                 COUNT(sp.id) as total_posts,
-                COUNT(CASE WHEN sp.created_at >= NOW() - INTERVAL '24 hours' THEN 1 END) as posts_today,
-                COUNT(CASE WHEN sp.created_at >= NOW() - INTERVAL '7 days' THEN 1 END) as posts_this_week,
                 SUM(sp.upvotes) as total_upvotes,
                 SUM(sp.downvotes) as total_downvotes,
                 SUM(sp.comment_count) as total_comments,
-                SUM(sp.share_count) as total_shares,
                 SUM(sp.view_count) as total_views,
-                COUNT(CASE WHEN sp.total_score > 0 THEN 1 END) as positive_posts,
-                COUNT(CASE WHEN sp.is_trending = true THEN 1 END) as trending_posts,
-                COUNT(DISTINCT sp.user_id) as active_users,
-                COUNT(CASE WHEN r.is_resolved = true THEN 1 END) as resolved_issues,
                 AVG(sp.total_score) as avg_score
             FROM social_posts sp
-            LEFT JOIN reports r ON sp.report_id = r.id
-            WHERE sp.is_public = true
+            WHERE sp.user_id = $1 AND sp.is_public = true
         `;
 
-        const result = await queryOne(statsQuery);
+        const result = await queryOne(statsQuery, [userId]);
 
         const stats = {
             totalPosts: parseInt(result.total_posts) || 0,
-            postsToday: parseInt(result.posts_today) || 0,
-            postsThisWeek: parseInt(result.posts_this_week) || 0,
             totalUpvotes: parseInt(result.total_upvotes) || 0,
             totalDownvotes: parseInt(result.total_downvotes) || 0,
             totalComments: parseInt(result.total_comments) || 0,
-            totalShares: parseInt(result.total_shares) || 0,
             totalViews: parseInt(result.total_views) || 0,
-            positivePosts: parseInt(result.positive_posts) || 0,
-            trendingPosts: parseInt(result.trending_posts) || 0,
-            activeUsers: parseInt(result.active_users) || 0,
-            resolvedIssues: parseInt(result.resolved_issues) || 0,
             avgScore: parseFloat(result.avg_score) || 0,
             engagementRate: result.total_posts > 0 ? 
                 ((parseInt(result.total_upvotes) + parseInt(result.total_comments)) / parseInt(result.total_posts) * 100).toFixed(2) : 0
         };
 
-        // Cache for 15 minutes
-        await redisService.cacheReports(cacheKey, stats, 900);
+        // Cache for 5 minutes (shorter than global stats since user data changes more frequently)
+        await redisService.cacheReports(cacheKey, stats, 300);
 
-        console.log('✅ Social statistics fetched successfully');
+        console.log('✅ User social statistics fetched successfully:', stats);
 
         res.status(200).json({
             success: true,
@@ -759,7 +764,7 @@ const getSocialStats = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error fetching social statistics:', error);
+        console.error('❌ Error fetching user social statistics:', error);
         res.status(500).json({
             success: false,
             message: 'Server error while fetching statistics',
