@@ -392,6 +392,8 @@ const getUserReports = async (req, res) => {
         const result = await query(baseQuery, queryParams);
 
         // Map all reports to camelCase
+        // IMPORTANT: Include status and assignedAdminId so User App can display current state
+        // Status flow: pending → assigned → in_progress → resolved
         const mappedReports = result.rows.map(report => ({
             id: report.id,
             userId: report.user_id,
@@ -399,6 +401,8 @@ const getUserReports = async (req, res) => {
             description: report.description,
             category: report.category,
             priority: report.priority,
+            status: report.status,                     // Include status for user app
+            assignedAdminId: report.assigned_admin_id, // Show if assigned to admin
             mediaUrls: report.media_urls,
             audioUrl: report.audio_url,
             latitude: report.latitude,
@@ -407,6 +411,7 @@ const getUserReports = async (req, res) => {
             department: report.department,
             isResolved: report.is_resolved,
             createdAt: toISO(report.created_at),
+            updatedAt: toISO(report.updated_at),       // Show when last updated
             resolvedAt: toISO(report.resolved_at),
             resolvedMediaUrls: report.resolved_media_urls,
             resolutionNotes: report.resolution_note,
@@ -1830,7 +1835,7 @@ const assignReport = async (req, res) => {
 
         // Check if report exists
         const reportCheckQuery = `
-            SELECT id, title, is_resolved, status
+            SELECT id, title, user_id, is_resolved, status
             FROM reports
             WHERE id = $1
         `;
@@ -1865,6 +1870,36 @@ const assignReport = async (req, res) => {
         const result = await queryOne(updateQuery, [assignedAdminId, reportId]);
 
         console.log('✅ Report assigned successfully:', reportId);
+
+        // Invalidate all relevant caches so apps get the updated status
+        try {
+            // Invalidate admin report caches
+            await redisService.invalidateAdminReports();
+            
+            // Invalidate user reports cache for this report's user
+            const userId = reportResult.user_id || result.user_id;
+            if (userId) {
+                const userCachePattern = `user_reports:${userId}:*`;
+                const userKeys = await redisService.scanKeys(userCachePattern);
+                if (userKeys.length > 0) {
+                    await redisService.del(userKeys);
+                    console.log(`🗑️ Invalidated ${userKeys.length} user report cache entries`);
+                }
+            }
+            
+            // Invalidate field admin caches for assigned admin
+            const adminCachePattern = `admin_reports:${assignedAdminId}:*`;
+            const adminKeys = await redisService.scanKeys(adminCachePattern);
+            if (adminKeys.length > 0) {
+                await redisService.del(adminKeys);
+                console.log(`🗑️ Invalidated ${adminKeys.length} admin report cache entries`);
+            }
+            
+            console.log('🧹 Cache invalidation completed for report assignment');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate caches:', cacheError.message);
+            // Don't fail the request if cache invalidation fails
+        }
 
         // Map the result to camelCase
         const mappedReport = {

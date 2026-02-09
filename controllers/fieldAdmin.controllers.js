@@ -1,8 +1,27 @@
 import { query, queryOne, transaction } from "../db/utils.js";
 import { uploadBufferToCloudinary } from "../services/cloudinary.js";
+import redisService from "../services/redis.js";
 
 // Helper to convert DB timestamp values to ISO strings (null-safe)
 const toISO = (val) => (val ? new Date(val).toISOString() : null);
+
+/**
+ * Status mapping for Field Admin App
+ * Database status -> Display status for field admin
+ * - 'assigned' becomes 'pending' (newly assigned work appears as pending for field admin)
+ * - 'in_progress' stays 'in_progress'
+ * - 'resolved' becomes 'completed' for clarity
+ */
+const getFieldAdminDisplayStatus = (dbStatus) => {
+    const statusMap = {
+        'assigned': 'pending',        // Assigned reports show as pending for field admin
+        'pending': 'pending',         // Unassigned pending stays pending
+        'in_progress': 'in_progress', // In progress stays the same
+        'resolved': 'completed',      // Resolved shows as completed
+        'rejected': 'rejected'        // Rejected stays the same
+    };
+    return statusMap[dbStatus] || dbStatus;
+};
 
 // Get reports assigned to a specific field admin
 export const getAssignedReports = async (req, res) => {
@@ -68,7 +87,8 @@ export const getAssignedReports = async (req, res) => {
             description: r.description,
             category: r.category,
             priority: r.priority,
-            status: r.status,
+            status: r.status,                            // Actual database status
+            displayStatus: getFieldAdminDisplayStatus(r.status), // Display status for field admin app
             mediaUrls: r.media_urls || [],
             audioUrl: r.audio_url,
             latitude: parseFloat(r.latitude),
@@ -154,7 +174,8 @@ export const getReportDetails = async (req, res) => {
             description: report.description,
             category: report.category,
             priority: report.priority,
-            status: report.status,
+            status: report.status,                            // Actual database status
+            displayStatus: getFieldAdminDisplayStatus(report.status), // Display status for field admin app
             mediaUrls: report.media_urls || [],
             audioUrl: report.audio_url,
             latitude: parseFloat(report.latitude),
@@ -235,6 +256,25 @@ export const startWork = async (req, res) => {
 
             return result.rows[0];
         });
+
+        // Invalidate caches so all platforms see the status change
+        try {
+            await redisService.invalidateAdminReports();
+            
+            // Invalidate user reports cache
+            const userId = updatedReport.user_id;
+            if (userId) {
+                const userCachePattern = `user_reports:${userId}:*`;
+                const userKeys = await redisService.scanKeys(userCachePattern);
+                if (userKeys.length > 0) {
+                    await redisService.del(userKeys);
+                    console.log(`🗑️ Invalidated ${userKeys.length} user report cache entries`);
+                }
+            }
+            console.log('🧹 Cache invalidation completed for startWork');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate caches:', cacheError.message);
+        }
 
         return res.status(200).json({
             success: true,
@@ -413,6 +453,25 @@ export const completeReport = async (req, res) => {
 
         console.log('✅ Report completed successfully');
 
+        // Invalidate caches so all platforms see the completion
+        try {
+            await redisService.invalidateAdminReports();
+            
+            // Invalidate user reports cache
+            const userId = updatedReport.user_id;
+            if (userId) {
+                const userCachePattern = `user_reports:${userId}:*`;
+                const userKeys = await redisService.scanKeys(userCachePattern);
+                if (userKeys.length > 0) {
+                    await redisService.del(userKeys);
+                    console.log(`🗑️ Invalidated ${userKeys.length} user report cache entries`);
+                }
+            }
+            console.log('🧹 Cache invalidation completed for completeReport');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate caches:', cacheError.message);
+        }
+
         return res.status(200).json({
             success: true,
             message: "Report marked as resolved",
@@ -433,10 +492,11 @@ export const getDashboardStats = async (req, res) => {
     try {
         const { adminId } = req.params;
 
+        // For field admin: 'assigned' and 'pending' both count as "pending work"
         const statsQuery = `
             SELECT 
                 COUNT(*) as total_assigned,
-                COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                COUNT(*) FILTER (WHERE status IN ('pending', 'assigned')) as pending,
                 COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
                 COUNT(*) FILTER (WHERE is_resolved = true AND DATE(resolved_at) = CURRENT_DATE) as completed_today,
                 COUNT(*) FILTER (WHERE is_resolved = true AND resolved_at >= CURRENT_DATE - INTERVAL '7 days') as completed_this_week,
