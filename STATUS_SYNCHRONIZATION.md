@@ -15,8 +15,8 @@ The reports table maintains a single `status` field that serves as the single so
 ### 2. **Report Assignment (Admin assigns to field admin)**
 - **Database Status**: `assigned`
 - **User App Display**: "Assigned"
-- **Admin Panel Display**: "Assigned"
-- **Field Admin App Display**: "Pending" (new work to be started)
+- **Admin Panel Display**: "Assigned" (shows actual status from database)
+- **Field Admin App Display**: "Pending" (mapped from assigned → pending for field admin perspective)
 
 ### 3. **Work Started (Field admin starts working)**
 - **Database Status**: `in_progress`
@@ -61,13 +61,15 @@ All field admin endpoints (`/api/field-admin/*`) return both the actual database
 ```
 
 ### Admin Panel & User App Endpoints
-These endpoints return the actual database status directly:
+These endpoints return the actual database status directly and display it as-is:
 
 ```json
 {
-  "status": "assigned"           // Use this directly for display
+  "status": "assigned"           // Use this directly for display (shows as "Assigned")
 }
 ```
+
+**Note:** The Admin Panel now displays the actual database status values (`pending`, `assigned`, `in_progress`, `resolved`, `rejected`) while the Field Admin App uses a display mapping for better UX (e.g., `assigned` is shown as "Pending" to indicate new work).
 
 ## Backend Implementation
 
@@ -100,7 +102,27 @@ const getFieldAdminDisplayStatus = (dbStatus) => {
    - Updates: `status = 'resolved'`, `is_resolved = true`, `resolved_at = NOW()`
    - Creates: Work log entry with photos and notes
 
-## Frontend Implementation
+## FAdmin Panel Website Status Display (`pages/Reports.jsx` & `pages/ReportDetails.jsx`)
+
+```javascript
+const getStatusBadge = (status) => {
+    const statusConfig = {
+      pending: { label: 'Pending', color: 'bg-orange-100 text-orange-800', dot: 'bg-orange-500' },
+      assigned: { label: 'Assigned', color: 'bg-purple-100 text-purple-800', dot: 'bg-purple-500' },
+      in_progress: { label: 'In Progress', color: 'bg-blue-100 text-blue-800', dot: 'bg-blue-500' },
+      resolved: { label: 'Completed', color: 'bg-green-100 text-green-800', dot: 'bg-green-500' },
+      rejected: { label: 'Rejected', color: 'bg-red-100 text-red-800', dot: 'bg-red-500' },
+    };
+    return statusConfig[status?.toLowerCase()] || statusConfig.pending;
+};
+```
+
+**Admin Panel displays actual database status:**
+- `pending` → "Pending"
+- `assigned` → "Assigned"
+- `in_progress` → "In Progress"
+- `resolved` → "Completed"
+- `rejected` → "Rejected"
 
 ### Field Admin App (`constants/index.ts`)
 
@@ -112,6 +134,16 @@ export const FIELD_ADMIN_STATUS_MAP = {
   'in_progress': { label: 'In Progress', displayStatus: 'in_progress' },
   'resolved': { label: 'Completed', displayStatus: 'resolved' },
   'rejected': { label: 'Rejected', displayStatus: 'rejected' },
+};
+```
+
+**Field Admin App uses mapped status for better UX:**
+- `assignAdmin Panel → Shows "Assigned"
+5. Check Field Admin App → Shows "Pending" (1 pending item)
+6. Field admin starts work → Status: `in_progress`
+7. Check all platforms → Admin Panel shows "In Progress", Field Admin shows "In Progress"
+8. Field admin completes → Status: `resolved`
+9. Check all platforms → Admin Panel shows "Completed", Field Admin shows': { label: 'Rejected', displayStatus: 'rejected' },
 };
 ```
 
@@ -135,8 +167,8 @@ COUNT(*) FILTER (WHERE status IN ('pending', 'assigned')) as pending
 ### Test Scenario 1: Complete Workflow
 1. User submits report → Status: `pending`
 2. Check Admin Panel → Shows "Pending"
-3. Admin assigns to field admin → Status: `assigned`
-4. Check Field Admin App → Shows "Pending" (1 pending item)
+3. Admin assigns to field a10, 2026  
+**Version**: 1.1dmin App → Shows "Pending" (1 pending item)
 5. Field admin starts work → Status: `in_progress`
 6. Check all platforms → All show "In Progress"
 7. Field admin completes → Status: `resolved`
