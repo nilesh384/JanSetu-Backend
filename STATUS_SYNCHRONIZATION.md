@@ -8,7 +8,7 @@ The reports table maintains a single `status` field that serves as the single so
 
 ### 1. **Report Submission (User submits report)**
 - **Database Status**: `pending`
-- **User App Display**: "Submitted" or "Pending"
+- **User App Display**: "Pending"
 - **Admin Panel Display**: "Pending"
 - **Field Admin App**: Not visible (not assigned yet)
 
@@ -26,7 +26,7 @@ The reports table maintains a single `status` field that serves as the single so
 
 ### 4. **Work Completed (Field admin completes the task)**
 - **Database Status**: `resolved`
-- **User App Display**: "Completed" or "Resolved"
+- **User App Display**: "Completed"
 - **Admin Panel Display**: "Completed" or "Resolved"
 - **Field Admin App Display**: "Completed"
 
@@ -101,6 +101,41 @@ const getFieldAdminDisplayStatus = (dbStatus) => {
 3. **Complete Report** (`POST /api/field-admin/reports/:reportId/complete`)
    - Updates: `status = 'resolved'`, `is_resolved = true`, `resolved_at = NOW()`
    - Creates: Work log entry with photos and notes
+
+## Frontend Implementation
+
+### User App Status Display (`reportDetails.tsx`, `my.tsx`, `nearby.tsx`)
+
+```typescript
+const getStatusColor = (status?: string) => {
+  const statusColors: { [key: string]: string } = {
+    pending: '#FF9800',       // Orange
+    assigned: '#9C27B0',      // Purple  
+    in_progress: '#2196F3',   // Blue
+    resolved: '#4CAF50',      // Green
+    rejected: '#F44336',      // Red
+  };
+  return statusColors[status?.toLowerCase() || 'pending'] || '#2196F3';
+};
+
+const getStatusText = (status?: string) => {
+  const statusLabels: { [key: string]: string } = {
+    pending: 'Pending',
+    assigned: 'Assigned',
+    in_progress: 'In Progress',
+    resolved: 'Completed',
+    rejected: 'Rejected',
+  };
+  return statusLabels[status?.toLowerCase() || 'pending'] || 'Pending';
+};
+```
+
+**User App displays actual database status with user-friendly labels:**
+- `pending` → "Pending" 🟠
+- `assigned` → "Assigned" 🟣  
+- `in_progress` → "In Progress" 🔵
+- `resolved` → "Completed" 🟢
+- `rejected` → "Rejected" 🔴
 
 ## FAdmin Panel Website Status Display (`pages/Reports.jsx` & `pages/ReportDetails.jsx`)
 
@@ -197,5 +232,5 @@ COUNT(*) FILTER (WHERE status IN ('pending', 'assigned')) as pending
 
 ---
 
-**Last Updated**: February 9, 2026  
-**Version**: 1.0.0
+**Last Updated**: February 13, 2026  
+**Version**: 1.2.0

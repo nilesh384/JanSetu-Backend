@@ -1,5 +1,6 @@
 import { query, queryOne, transaction } from "../db/utils.js";
 import redisService from "../services/redis.js";
+import { updateReportPriority } from "../services/priorityCalculation.js";
 
 // Helper to convert DB timestamp values to ISO strings (null-safe)
 const toISO = (val) => (val ? new Date(val).toISOString() : null);
@@ -122,8 +123,9 @@ const getSocialPosts = async (req, res) => {
     try {
         const {
             tab = 'all', // all, trending, nearby, my_activity
+            page,         // Page number (starts at 1)
+            offset,       // Direct offset (alternative to page)
             limit = 20,
-            offset = 0,
             latitude,
             longitude,
             radius = 10, // km
@@ -131,15 +133,18 @@ const getSocialPosts = async (req, res) => {
             priority
         } = req.query;
 
+        // Calculate offset from page number if page is provided, otherwise use offset
+        const calculatedOffset = page ? (parseInt(page) - 1) * parseInt(limit) : (offset ? parseInt(offset) : 0);
+
         // Handle userId from different sources - for GET requests, userId might come from query params
         const requestingUserId = req.userId || req.body?.userId || req.query?.userId || null;
 
-        console.log('🔍 Fetching social posts:', { tab, limit, offset, requestingUserId });
+        console.log('🔍 Fetching social posts:', { tab, page, limit, offset: calculatedOffset, requestingUserId });
         console.log('🔍 Query params:', req.query);
         console.log('🔍 Will join votes table:', !!requestingUserId);
 
         // Create cache key
-        const cacheKey = `social_posts:${tab}:${limit}:${offset}:${requestingUserId || 'guest'}:${latitude || 'none'}:${longitude || 'none'}:${radius}:${category || 'all'}:${priority || 'all'}`;
+        const cacheKey = `social_posts:${tab}:${limit}:${calculatedOffset}:${requestingUserId || 'guest'}:${latitude || 'none'}:${longitude || 'none'}:${radius}:${category || 'all'}:${priority || 'all'}`;
         
         // Temporarily disable cache for debugging userVote issues
         // Try cache first
@@ -249,7 +254,7 @@ const getSocialPosts = async (req, res) => {
         }
 
         baseQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        queryParams.push(parseInt(limit), parseInt(offset));
+        queryParams.push(parseInt(limit), calculatedOffset);
 
         console.log('🔍 Executing query with params:', queryParams);
         const result = await query(baseQuery, queryParams);
@@ -291,7 +296,7 @@ const getSocialPosts = async (req, res) => {
         const responseData = {
             posts: posts,
             totalCount: posts.length,
-            currentPage: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+            currentPage: page ? parseInt(page) : Math.floor(calculatedOffset / parseInt(limit)) + 1,
             totalPages: 1, // We don't have total count, so this is estimated
             hasMore: posts.length === parseInt(limit)
         };
@@ -437,6 +442,16 @@ const voteOnPost = async (req, res) => {
 
         console.log('✅ Vote recorded:', voteResult.actionTaken);
 
+        // Trigger priority recalculation in background (don't wait)
+        transaction(async (client) => {
+            const reportQuery = `SELECT report_id FROM social_posts WHERE id = $1`;
+            const reportResult = await client.query(reportQuery, [postId]);
+            if (reportResult.rows[0]?.report_id) {
+                await updateReportPriority(client, reportResult.rows[0].report_id);
+                console.log('🎯 Priority recalculated after vote');
+            }
+        }).catch(err => console.warn('⚠️ Priority recalculation failed:', err));
+
         // Determine final user vote state
         let finalUserVote = null;
         if (voteResult.actionTaken === 'added_upvote' || voteResult.actionTaken === 'changed_to_upvote') {
@@ -548,6 +563,16 @@ const addComment = async (req, res) => {
         await redisService.invalidatePattern('social_comments:*');
 
         console.log('✅ Comment added successfully:', comment.id);
+
+        // Trigger priority recalculation in background (don't wait)
+        transaction(async (client) => {
+            const reportQuery = `SELECT report_id FROM social_posts WHERE id = $1`;
+            const reportResult = await client.query(reportQuery, [postId]);
+            if (reportResult.rows[0]?.report_id) {
+                await updateReportPriority(client, reportResult.rows[0].report_id);
+                console.log('🎯 Priority recalculated after comment');
+            }
+        }).catch(err => console.warn('⚠️ Priority recalculation failed:', err));
 
         res.status(201).json({
             success: true,

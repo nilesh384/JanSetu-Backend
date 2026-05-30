@@ -1,4 +1,4 @@
-import { query, queryOne, transaction } from "../db/utils.js";
+import { query, queryOne, queryMany, transaction } from "../db/utils.js";
 import { uploadBufferToCloudinary } from "../services/cloudinary.js";
 import redisService from "../services/redis.js";
 import { sendReportResolvedNotification } from "../services/notificationService.js";
@@ -1052,7 +1052,7 @@ const resolveReport = async (req, res) => {
 const deleteReport = async (req, res) => {
     try {
         const { reportId } = req.params;
-        const { userId } = req.query; // Get from query params (optional for authorization)
+        const { userId, adminId, reason, fraudIndicators } = req.body; // Admin deletion uses body params
 
         if (!reportId) {
             return res.status(400).json({
@@ -1061,10 +1061,20 @@ const deleteReport = async (req, res) => {
             });
         }
 
-        console.log('🗑️ Deleting report:', reportId, userId ? `by user: ${userId}` : '(admin delete)');
+        // Check if this is an admin deletion
+        const isAdminDeletion = Boolean(adminId);
+
+        if (isAdminDeletion && !reason) {
+            return res.status(400).json({
+                success: false,
+                message: "Deletion reason is required for admin deletions"
+            });
+        }
+
+        console.log('🗑️ Deleting report:', reportId, isAdminDeletion ? `by admin: ${adminId}` : `by user: ${userId}`);
 
         const deleteResult = await transaction(async (client) => {
-            // First, get the report to check ownership and get user_id
+            // First, get the report to check ownership and get full details
             const getReportQuery = `SELECT * FROM reports WHERE id = $1`;
             const reportResult = await client.query(getReportQuery, [reportId]);
 
@@ -1074,9 +1084,77 @@ const deleteReport = async (req, res) => {
 
             const report = reportResult.rows[0];
 
-            // If userId is provided, check if user owns the report
-            if (userId && report.user_id !== userId) {
-                throw new Error('Access denied: You can only delete your own reports');
+            // Authorization check
+            if (isAdminDeletion) {
+                // Verify admin exists and is active
+                const adminQuery = `SELECT id, email, full_name, is_active FROM admins WHERE id = $1`;
+                const adminResult = await client.query(adminQuery, [adminId]);
+                
+                if (adminResult.rows.length === 0 || !adminResult.rows[0].is_active) {
+                    throw new Error('Invalid or inactive admin');
+                }
+
+                const admin = adminResult.rows[0];
+
+                // Create audit log entry for admin deletion
+                const auditQuery = `
+                    INSERT INTO report_deletion_audit (
+                        report_id,
+                        report_title,
+                        report_category,
+                        report_user_id,
+                        deleted_by_admin_id,
+                        deleted_by_admin_email,
+                        deletion_reason,
+                        fraud_indicators,
+                        report_snapshot
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    RETURNING id
+                `;
+
+                try {
+                    await client.query(auditQuery, [
+                        reportId,
+                        report.title,
+                        report.category,
+                        report.user_id,
+                        adminId,
+                        admin.email,
+                        reason,
+                        fraudIndicators ? JSON.stringify(fraudIndicators) : null,
+                        JSON.stringify(report)
+                    ]);
+                    console.log('✅ Audit log entry created for admin deletion');
+                } catch (auditError) {
+                    console.warn('⚠️ Failed to create audit log (table may not exist yet):', auditError.message);
+                    // Continue with deletion even if audit log fails
+                }
+
+            } else if (userId) {
+                // User deletion - check ownership
+                if (report.user_id !== userId) {
+                    throw new Error('Access denied: You can only delete your own reports');
+                }
+            } else {
+                throw new Error('Either userId or adminId must be provided');
+            }
+
+            // Delete related social posts and their associated data (comments, votes, etc.)
+            const socialPostQuery = `SELECT id FROM social_posts WHERE report_id = $1`;
+            const socialPostResult = await client.query(socialPostQuery, [reportId]);
+            
+            if (socialPostResult.rows.length > 0) {
+                const socialPostId = socialPostResult.rows[0].id;
+                console.log('🗑️ Deleting associated social post:', socialPostId);
+
+                // Delete comments on this social post
+                await client.query(`DELETE FROM social_comments WHERE post_id = $1`, [socialPostId]);
+                
+                // Delete votes on this social post
+                await client.query(`DELETE FROM social_votes WHERE post_id = $1`, [socialPostId]);
+                
+                // Delete the social post itself
+                await client.query(`DELETE FROM social_posts WHERE id = $1`, [socialPostId]);
             }
 
             // Delete the report
@@ -1096,22 +1174,30 @@ const deleteReport = async (req, res) => {
             `;
             await client.query(updateUserQuery, [report.user_id, report.is_resolved]);
 
-            return { reportId, userId: report.user_id, wasResolved: report.is_resolved };
+            return { 
+                reportId, 
+                userId: report.user_id, 
+                wasResolved: report.is_resolved,
+                deletedBy: isAdminDeletion ? 'admin' : 'user'
+            };
         });
 
-        console.log('✅ Report deleted successfully:', reportId);
+        console.log('✅ Report deleted successfully:', reportId, `(by ${deleteResult.deletedBy})`);
 
-        // Invalidate admin report caches since report was deleted
+        // Invalidate relevant caches
         try {
             await redisService.invalidateAdminReports();
+            await redisService.invalidatePattern('social_posts:*');
+            await redisService.invalidatePattern('report_social_stats:*');
         } catch (cacheError) {
-            console.warn('⚠️ Failed to invalidate admin report caches:', cacheError.message);
+            console.warn('⚠️ Failed to invalidate caches:', cacheError.message);
         }
 
         res.status(200).json({
             success: true,
             message: 'Report deleted successfully',
-            deletedReportId: reportId
+            deletedReportId: reportId,
+            deletedBy: deleteResult.deletedBy
         });
 
     } catch (error) {
@@ -1128,6 +1214,20 @@ const deleteReport = async (req, res) => {
             return res.status(403).json({
                 success: false,
                 message: 'Access denied: You can only delete your own reports'
+            });
+        }
+
+        if (error.message === 'Invalid or inactive admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Invalid or inactive admin'
+            });
+        }
+
+        if (error.message === 'Either userId or adminId must be provided') {
+            return res.status(400).json({
+                success: false,
+                message: 'Either userId or adminId must be provided'
             });
         }
         
@@ -1931,6 +2031,99 @@ const assignReport = async (req, res) => {
     }
 };
 
+/**
+ * Get deletion audit logs (Super Admin only)
+ * GET /api/v1/reports/audit-logs
+ */
+const getDeletionAuditLogs = async (req, res) => {
+    try {
+        const { adminId, adminRole } = req.query;
+        const { limit = 50, offset = 0, reportId } = req.query;
+
+        // Verify super admin access
+        if (!adminId || !adminRole) {
+            return res.status(400).json({
+                success: false,
+                message: "Admin ID and role are required"
+            });
+        }
+
+        if (adminRole !== 'super_admin') {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied. Only super admins can view deletion audit logs."
+            });
+        }
+
+        // Build query with admin join to get full details
+        let auditQuery = `
+            SELECT 
+                rdal.id,
+                rdal.report_id,
+                rdal.deleted_by_admin_id,
+                rdal.deleted_by_admin_email as admin_email,
+                a.full_name as admin_full_name,
+                a.role as admin_role,
+                rdal.deletion_reason,
+                rdal.fraud_indicators,
+                rdal.report_snapshot,
+                rdal.deleted_at
+            FROM report_deletion_audit rdal
+            LEFT JOIN admins a ON rdal.deleted_by_admin_id = a.id
+        `;
+
+        const queryParams = [];
+        let paramIndex = 1;
+
+        // Filter by specific report if provided
+        if (reportId) {
+            auditQuery += ` WHERE rdal.report_id = $${paramIndex}`;
+            queryParams.push(reportId);
+            paramIndex++;
+        }
+
+        // Order by most recent first
+        auditQuery += ` ORDER BY rdal.deleted_at DESC`;
+
+        // Add pagination
+        auditQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        queryParams.push(parseInt(limit), parseInt(offset));
+
+        // Execute query
+        const auditLogs = await queryMany(auditQuery, queryParams);
+
+        // Get total count
+        let countQuery = `SELECT COUNT(*) as total FROM report_deletion_audit`;
+        if (reportId) {
+            countQuery += ` WHERE report_id = $1`;
+        }
+        const countResult = await queryOne(countQuery, reportId ? [reportId] : []);
+        const totalCount = parseInt(countResult?.total || 0);
+
+        console.log(`📋 Retrieved ${auditLogs.length} audit logs for super admin ${adminId}`);
+
+        res.status(200).json({
+            success: true,
+            data: auditLogs,
+            pagination: {
+                total: totalCount,
+                limit: parseInt(limit),
+                offset: parseInt(offset),
+                hasMore: parseInt(offset) + auditLogs.length < totalCount
+            },
+            message: "Audit logs retrieved successfully"
+        });
+
+    } catch (error) {
+        console.error("❌ Error fetching deletion audit logs:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to retrieve audit logs",
+            error: error.message
+        });
+    }
+};
+
 export {
     createReport,
     getUserReports,
@@ -1944,5 +2137,6 @@ export {
     uploadReportMedia,
     uploadSingleMedia,
     getAdminReports,
-    assignReport
+    assignReport,
+    getDeletionAuditLogs
 };

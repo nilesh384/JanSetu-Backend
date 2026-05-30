@@ -12,7 +12,8 @@ import {
     uploadReportMedia,
     uploadSingleMedia,
     getAdminReports,
-    assignReport
+    assignReport,
+    getDeletionAuditLogs
 } from '../controllers/reports.controller.js';
 import { upload } from '../middlewares/multer.middleware.js';
 
@@ -34,6 +35,7 @@ router.route('/user/:userId').get(getUserReports);
 router.route('/admin/:adminId').get(getAdminReports);
 router.route('/nearby').get(getNearbyReports);
 router.route('/community-stats').get(getCommunityStats);
+router.route('/audit-logs').get(getDeletionAuditLogs);  // Super Admin only
 
 router.route('/:reportId').get(getReportById);
 router.route('/:reportId').put(updateReport);              //TODO: Restrict to report owner or admin

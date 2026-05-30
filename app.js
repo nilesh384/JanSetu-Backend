@@ -39,6 +39,7 @@ import messagesRouter from "./routes/messages.routes.js";
 import socialRouter from "./routes/social.routes.js";
 import notificationsRouter from "./routes/notifications.routes.js";
 import fieldAdminRouter from "./routes/fieldAdmin.routes.js";
+import priorityRouter from "./routes/priority.routes.js";
 
 
 //routes declaration
@@ -51,6 +52,7 @@ app.use("/api/v1/messages", messagesRouter);
 app.use("/api/v1/social", socialRouter);
 app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/field-admin", fieldAdminRouter);
+app.use("/api/v1/priority", priorityRouter);
 
 
 

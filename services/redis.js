@@ -82,6 +82,20 @@ class RedisService {
     }
   }
 
+  async ping() {
+    if (!this.isAvailable()) {
+      return false;
+    }
+
+    try {
+      await this.client.ping();
+      return true;
+    } catch (error) {
+      console.error('❌ Redis PING error:', error.message);
+      return false;
+    }
+  }
+
   async disconnect() {
     if (this.client && this.isConnected) {
       await this.client.quit();

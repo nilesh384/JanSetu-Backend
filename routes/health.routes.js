@@ -86,4 +86,36 @@ router.get("/db", async (req, res) => {
   }
 });
 
+/**
+ * Keepalive endpoint for Vercel Cron
+ * GET /api/v1/health/keepalive
+ */
+router.get("/keepalive", async (req, res) => {
+  try {
+    const pool = getPool();
+    const dbResult = await pool.query('SELECT NOW() as current_time');
+    const redisAlive = await redisService.ping();
+
+    return res.status(200).json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      database: {
+        connected: true,
+        currentTime: dbResult.rows[0].current_time
+      },
+      redis: {
+        connected: redisAlive
+      }
+    });
+  } catch (error) {
+    console.error('❌ Keepalive check failed:', error);
+
+    return res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    });
+  }
+});
+
 export default router;

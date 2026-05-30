@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/v1/health/keepalive",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "functions": {
     "server.js": {
       "maxDuration": 30
