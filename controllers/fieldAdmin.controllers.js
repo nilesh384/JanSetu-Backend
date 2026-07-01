@@ -1,6 +1,7 @@
 import { query, queryOne, transaction } from "../db/utils.js";
 import { uploadBufferToCloudinary } from "../services/cloudinary.js";
 import redisService from "../services/redis.js";
+import { sendWhatsAppMessage, sendWhatsAppImage } from "../services/whatsappService.js";
 
 // Helper to convert DB timestamp values to ISO strings (null-safe)
 const toISO = (val) => (val ? new Date(val).toISOString() : null);
@@ -452,6 +453,46 @@ export const completeReport = async (req, res) => {
         });
 
         console.log('✅ Report completed successfully');
+
+        // Send WhatsApp notification
+        try {
+            if (updatedReport && updatedReport.user_id) {
+                const user = await queryOne(`SELECT phone_number, full_name FROM users WHERE id = $1`, [updatedReport.user_id]);
+                if (user && user.phone_number) {
+                    const title = updatedReport.title || 'Report';
+                    const notes = updatedReport.resolution_note || 'No resolution details provided.';
+                    
+                    let messageText = `🔔 *Jan Setu Update*\n\n`;
+                    messageText += `Hello *${user.full_name || 'Citizen'}*,\n\n`;
+                    messageText += `Your report *"${title}"* has been successfully resolved! 🎉\n\n`;
+                    messageText += `*Resolution Details:*\n`;
+                    messageText += `"${notes}"\n\n`;
+                    messageText += `Thank you for using Jan Setu to help improve our community.`;
+
+                    sendWhatsAppMessage(user.phone_number, messageText)
+                        .then(async (success) => {
+                            if (success) {
+                                console.log('✅ WhatsApp message sent for resolved report:', reportId);
+                                
+                                // Send resolved photos if any exist
+                                if (finalResolvedPhotos && finalResolvedPhotos.length > 0) {
+                                    console.log(`📸 [whatsappService] Sending ${finalResolvedPhotos.length} resolution photos to user...`);
+                                    for (let i = 0; i < finalResolvedPhotos.length; i++) {
+                                        const photoUrl = finalResolvedPhotos[i];
+                                        const caption = `Resolution Photo ${i + 1} for: *"${title}"*`;
+                                        await sendWhatsAppImage(user.phone_number, photoUrl, caption);
+                                    }
+                                }
+                            } else {
+                                console.warn('⚠️ WhatsApp message failed for resolved report:', reportId);
+                            }
+                        })
+                        .catch(err => console.error('❌ WhatsApp send error:', err));
+                }
+            }
+        } catch (waError) {
+            console.error('⚠️ Failed to initiate WhatsApp notification:', waError);
+        }
 
         // Invalidate caches so all platforms see the completion
         try {
