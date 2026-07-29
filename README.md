@@ -1,101 +1,104 @@
-# Backend Setup and Database Connection
+# JanSetu Backend
 
-## Overview
-This backend uses Node.js + Express with PostgreSQL. SSL/TLS handling is configured to work with managed Postgres providers like Aiven.
+The backend is the shared API layer for the JanSetu system. It powers the citizen app, admin panel, field admin app, and the operational workflows that connect them.
 
-## Database Connection Setup
+## What It Does
 
-### Environment Variables
-Copy `.env.example` to `.env` and configure:
+- Accepts and stores citizen complaints and supporting media
+- Tracks report status, assignment, and completion history
+- Calculates priority and helps route reports to the right team
+- Sends OTP, email, SMS, push, and WhatsApp notifications
+- Supports admin, field admin, social, message, report, user, and priority workflows
+- Integrates with Cloudinary, Firebase Admin, Redis, PostgreSQL, and third-party messaging services
+
+## Tech Stack
+
+- Node.js
+- Express 5
+- PostgreSQL
+- Sequelize
+- Redis
+- Cloudinary
+- Multer
+- JWT
+- Nodemailer
+- Firebase Admin
+- Twilio
+- Axios and third-party AI or messaging helpers
+
+## Main Modules
+
+- `controllers/` - request handlers for admin, field admin, messages, OTP, priority, reports, social, and users
+- `routes/` - REST endpoints for the platform features
+- `services/` - notification, AI, media, Redis, SMS, email, WhatsApp, and priority helpers
+- `db/` - database connection helpers and utilities
+- `middlewares/` - upload and request middleware
+- `Public/` - local image and temp asset storage
+- `config/` - service account and runtime configuration
+
+## Key Features
+
+- OTP authentication and user verification
+- Complaint intake and lifecycle management
+- Report prioritization and category handling
+- Field assignment and progress tracking
+- Notification fan-out across channels
+- Media upload and storage management
+- Social and messaging support
+- Health and status endpoints for operational monitoring
+
+## Routes At A Glance
+
+- `admin.routes.js`
+- `fieldAdmin.routes.js`
+- `health.routes.js`
+- `messages.routes.js`
+- `notifications.routes.js`
+- `otp.routes.js`
+- `priority.routes.js`
+- `reports.routes.js`
+- `social.routes.js`
+- `users.routes.js`
+
+## Environment Variables
+
+Create a local `.env` and provide the runtime values used by the services:
 
 ```env
 PORT=4000
-DATABASE_URL=postgres://username:password@hostname:port/database?sslmode=require
+DATABASE_URL=postgres://username:password@host:port/database?sslmode=require
+PG_CA_PATH=./certs/ca.pem
 
-# Optional: Path to CA certificate for SSL verification
-# PG_CA_PATH=./certs/ca.pem
-
-# Other required variables...
-TWILIO_ACCOUNT_SID=your_twilio_sid
-TWILIO_AUTH_TOKEN=your_twilio_token
 CLOUDINARY_CLOUD_NAME=your_cloudinary_name
 CLOUDINARY_API_KEY=your_cloudinary_key
 CLOUDINARY_API_SECRET=your_cloudinary_secret
+
+TWILIO_ACCOUNT_SID=your_twilio_sid
+TWILIO_AUTH_TOKEN=your_twilio_token
 ```
 
-### SSL Configuration
+## Database SSL Notes
 
-The database connection automatically handles SSL certificates:
+The connection layer supports managed PostgreSQL providers that require a CA bundle.
 
-1. **Production (Recommended)**: Use provider CA certificate
-   - Download CA bundle from your Postgres provider (Aiven, AWS RDS, etc.)
-   - Save as `Backend/certs/ca.pem`
-   - Set `PG_CA_PATH=./certs/ca.pem` in `.env`
-   - Restart server: `npm run dev`
+- Put the provider certificate in `Backend/certs/ca.pem`
+- Point `PG_CA_PATH` to that file in production
+- Keep the insecure development fallback out of production environments
 
-2. **Development Fallback**: Disable SSL verification
-   - Comment out or remove `PG_CA_PATH` from `.env`
-   - Server will use `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`
-   - ⚠️ **NOT safe for production**
-
-### Troubleshooting Connection Issues
-
-#### "self-signed certificate in certificate chain"
-This means the CA file doesn't match the server certificate:
-- Verify you downloaded the correct CA from your provider
-- Ensure the CA file includes the full certificate chain
-- For Aiven: Download from Console → Service Details → Connection Information
-
-#### "getaddrinfo ENOTFOUND hostname"
-DNS resolution failed:
-- Check if the hostname in `DATABASE_URL` is correct
-- Verify your network can reach the database (try ping/nslookup)
-- Confirm the database instance exists and is running
-
-#### "connection refused" or "timeout"
-Network connectivity issues:
-- Check firewall settings
-- Verify the port number (usually 5432 for Postgres, varies for managed services)
-- Ensure your IP is whitelisted in the provider console
-
-### Running the Server
+## Local Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
-
-# Expected output:
-# Using custom Postgres CA from PG_CA_PATH: /path/to/ca.pem
-# Connected to PostgreSQL database
-# Server running on port 4000
 ```
 
-### Security Notes
+The server entrypoint is `server.js` and the production start command is `npm start`.
 
-- **Never commit** CA certificates or secrets to version control
-- Use `PG_CA_PATH` in production for proper SSL verification
-- The development fallback (`NODE_TLS_REJECT_UNAUTHORIZED=0`) is insecure
-- Add `certs/` to `.gitignore` to prevent accidental commits
+## Related Docs
 
-### API Endpoints
-
-- `GET /api/reports/community-stats` - Community statistics
-- `POST /api/reports` - Submit new report
-- `GET /api/reports/nearby` - Get nearby reports
-- Other endpoints documented in route files
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Start with auto-reload
-npm run dev
-
-# Start production
-npm start
-```
+- `DEPLOYMENT_GUIDE.md`
+- `DYNAMIC_PRIORITY_SYSTEM.md`
+- `PRIORITY_SUMMARY.md`
+- `STATUS_SYNCHRONIZATION.md`
+- `REDIS_VERCEL_FIX.md`
+- `FIX_SUMMARY.md`
