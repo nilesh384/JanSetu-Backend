@@ -456,7 +456,8 @@ export const completeReport = async (req, res) => {
 
         // Send WhatsApp notification
         try {
-            if (updatedReport && updatedReport.user_id) {
+            const whatsappEnabled = process.env.WHATSAPP_REPORT_UPDATES_ENABLED === 'true';
+            if (whatsappEnabled && updatedReport?.whatsapp_updates === true && updatedReport.user_id) {
                 const user = await queryOne(`SELECT phone_number, full_name FROM users WHERE id = $1`, [updatedReport.user_id]);
                 if (user && user.phone_number) {
                     const title = updatedReport.title || 'Report';
