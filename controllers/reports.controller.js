@@ -110,7 +110,8 @@ const createReport = async (req, res) => {
             latitude,
             longitude,
             address,
-            department
+            department,
+            whatsappUpdates = false
         } = req.body;
 
         // Use either format for userId
@@ -172,8 +173,9 @@ const createReport = async (req, res) => {
                     latitude,
                     longitude,
                     address,
-                    department
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    department,
+                    whatsapp_updates
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING *
             `;
 
@@ -189,7 +191,8 @@ const createReport = async (req, res) => {
                 latitude || null,
                 longitude || null,
                 address || '',
-                department || 'General'
+                department || 'General',
+                whatsappUpdates === true
             ]);
 
             const createdReport = result.rows[0];
@@ -293,6 +296,7 @@ const createReport = async (req, res) => {
             longitude: newReport.longitude,
             address: newReport.address,
             department: newReport.department,
+            whatsappUpdates: newReport.whatsapp_updates === true,
             isResolved: newReport.is_resolved,
             createdAt: toISO(newReport.created_at),
             resolvedAt: toISO(newReport.resolved_at),
@@ -996,9 +1000,13 @@ const resolveReport = async (req, res) => {
 
         console.log('✅ Report resolved successfully by admin:', adminId);
 
-        // Send WhatsApp notification
+        // Send WhatsApp only when the reporter opted in and the feature is enabled.
         try {
-            const user = await queryOne(`SELECT phone_number, full_name FROM users WHERE id = $1`, [mappedReport.userId]);
+            const whatsappEnabled = process.env.WHATSAPP_REPORT_UPDATES_ENABLED === 'true';
+            const reporterOptedIn = resolvedReport.resolved?.whatsapp_updates === true;
+            const user = whatsappEnabled && reporterOptedIn
+                ? await queryOne(`SELECT phone_number, full_name FROM users WHERE id = $1`, [mappedReport.userId])
+                : null;
             if (user && user.phone_number) {
                 const title = mappedReport.title || 'Report';
                 const notes = mappedReport.resolutionNotes || 'No resolution details provided.';
